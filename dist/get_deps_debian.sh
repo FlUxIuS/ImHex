@@ -8,8 +8,8 @@ fi
 
 apt install -y \
   build-essential       \
-  gcc-14                \
-  g++-14                \
+  gcc-12                \
+  g++-12                \
   lld                   \
   ${PKGCONF:-}          \
   cmake                 \
