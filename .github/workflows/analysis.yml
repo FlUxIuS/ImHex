@@ -57,8 +57,9 @@ jobs:
           -DCMAKE_C_FLAGS="-fuse-ld=lld"        \
           -DCMAKE_CXX_FLAGS="-fuse-ld=lld"      \
           -DIMHEX_PATTERNS_PULL_MASTER=ON       \
+          -G Ninja                              \
           ..
-        make -j 4 install
+        ninja install
 
     - name: 🗯️ Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2

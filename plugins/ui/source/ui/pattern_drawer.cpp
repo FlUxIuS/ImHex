@@ -302,12 +302,12 @@ namespace hex::ui {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
 
         if (m_favorites.contains(m_currPatternPath)) {
-            if (ImGuiExt::DimmedIconButton(ICON_VS_STAR_DELETE, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram))) {
+            if (ImGuiExt::DimmedIconButton(ICON_VS_STAR_DELETE, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram), {}, { 1_scaled, 0 })) {
                 m_favorites.erase(m_currPatternPath);
             }
         }
         else {
-            if (ImGuiExt::DimmedIconButton(ICON_VS_STAR_ADD, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled))) {
+            if (ImGuiExt::DimmedIconButton(ICON_VS_STAR_ADD, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), {}, { 1_scaled, 0 })) {
                 m_favorites.insert({ m_currPatternPath, pattern.clone() });
             }
         }
@@ -394,6 +394,19 @@ namespace hex::ui {
             return pattern.getAttributeArguments("hex::spec_name")[0].toString(true);
         else
             return pattern.getDisplayName();
+    }
+
+    [[nodiscard]] std::vector<std::string> PatternDrawer::getPatternPath(const pl::ptrn::Pattern *pattern) const {
+        std::vector<std::string> result;
+
+        while (pattern != nullptr) {
+            result.emplace_back(pattern->getVariableName());
+            pattern = pattern->getParent();
+        }
+
+        std::reverse(result.begin(), result.end());
+
+        return result;
     }
 
     bool PatternDrawer::createTreeNode(const pl::ptrn::Pattern& pattern, bool leaf) {
@@ -1138,7 +1151,7 @@ namespace hex::ui {
         }
     
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("hex.ui.pattern_drawer.favorites"_lang, ImGuiTableColumnFlags_NoHeaderLabel | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoReorder | ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_IndentDisable, ImGui::GetTextLineHeight(), ImGui::GetID("favorite"));
+        ImGui::TableSetupColumn("hex.ui.pattern_drawer.favorites"_lang, ImGuiTableColumnFlags_NoHeaderLabel | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoReorder | ImGuiTableColumnFlags_IndentDisable | (m_favorites.empty() ? ImGuiTableColumnFlags_None : ImGuiTableColumnFlags_NoHide), ImGui::GetTextLineHeight(), ImGui::GetID("favorite"));
         ImGui::TableSetupColumn("hex.ui.pattern_drawer.var_name"_lang,  ImGuiTableColumnFlags_PreferSortAscending | ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_IndentEnable, 0, ImGui::GetID("name"));
         ImGui::TableSetupColumn("hex.ui.pattern_drawer.color"_lang,     ImGuiTableColumnFlags_PreferSortAscending, 0, ImGui::GetID("color"));
         ImGui::TableSetupColumn("hex.ui.pattern_drawer.start"_lang,     ImGuiTableColumnFlags_PreferSortAscending | ImGuiTableColumnFlags_DefaultSort, 0, ImGui::GetID("start"));
@@ -1229,7 +1242,7 @@ namespace hex::ui {
             this->resetEditing();
         }
 
-        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - (ImGui::GetTextLineHeightWithSpacing() * 9.4F));
+        ImGui::PushItemWidth(-(ImGui::GetTextLineHeightWithSpacing() * 8));
         if (ImGuiExt::InputTextIcon("##Search", ICON_VS_FILTER, m_filterText)) {
             m_filter = parseRValueFilter(m_filterText).value_or(Filter{ });
             updateFilter();
@@ -1367,33 +1380,33 @@ namespace hex::ui {
             m_filtersUpdated = true;
 
             if (!m_favoritesUpdateTask.isRunning()) {
-                m_favoritesUpdateTask = TaskManager::createTask("hex.ui.pattern_drawer.updating"_lang, TaskManager::NoProgress, [this, patterns](auto &task) {
+                m_favoritesUpdateTask = TaskManager::createTask("hex.ui.pattern_drawer.updating"_lang, TaskManager::NoProgress, [this, patterns, runtime](auto &task) {
                     size_t updatedFavorites = 0;
 
-                    const std::string favoriteAttribute = "hex::favorite";
-                    const std::string groupAttribute    = "hex::group";
+                    {
+                        const auto favorites = runtime->getPatternsWithAttribute("hex::favorite");
+                        for (const auto &pattern : favorites) {
+                            m_favorites.insert({ getPatternPath(pattern), pattern->clone() });
+                        }
+
+                        const auto groupAttribute = "hex::group";
+                        const auto groups = runtime->getPatternsWithAttribute(groupAttribute);
+                        for (const auto &pattern : groups) {
+                            const auto arguments = pattern->getAttributeArguments(groupAttribute);
+                            if (!arguments.empty()) {
+                                const auto &groupName = arguments.front().toString();
+                                if (!m_groups.contains(groupName))
+                                    m_groups.insert({ groupName, std::vector<std::unique_ptr<pl::ptrn::Pattern>>() });
+
+                                m_groups[groupName].push_back(pattern->clone());
+                            }
+                        }
+                    }
+
                     for (auto &pattern : patterns) {
                         std::vector<std::string> patternPath;
 
                         size_t startFavoriteCount = m_favorites.size();
-                        traversePatternTree(*pattern, patternPath, [&, this](const pl::ptrn::Pattern &currPattern) {
-                            if (currPattern.hasAttribute(favoriteAttribute))
-                                m_favorites.insert({ patternPath, currPattern.clone() });
-
-                            if (const auto &args = currPattern.getAttributeArguments(groupAttribute); !args.empty()) {
-                                auto groupName = args.front().toString();
-
-                                if (!m_groups.contains(groupName))
-                                    m_groups.insert({groupName, std::vector<std::unique_ptr<pl::ptrn::Pattern>>()});
-
-                                m_groups[groupName].push_back(currPattern.clone());
-                            }
-
-                            task.update();
-                        });
-
-                        task.update();
-
                         if (startFavoriteCount == m_favorites.size())
                             continue;
 
@@ -1429,7 +1442,7 @@ namespace hex::ui {
         m_jumpToPattern = nullptr;
 
         if (m_favoritesUpdateTask.isRunning()) {
-            ImGuiExt::TextOverlay("hex.ui.pattern_drawer.updating"_lang, ImGui::GetWindowPos() + ImGui::GetWindowSize() / 2);
+            ImGuiExt::TextOverlay("hex.ui.pattern_drawer.updating"_lang, ImGui::GetWindowPos() + ImGui::GetWindowSize() / 2, ImGui::GetWindowWidth() * 0.5);
         }
     }
 

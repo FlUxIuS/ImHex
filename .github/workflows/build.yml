@@ -205,9 +205,12 @@ jobs:
         max-size: 1G
 
     - name: ⬇️ Install dependencies
+      env:
+        # Make brew not display useless errors
+        HOMEBREW_TESTS: 1
       run: |
         brew reinstall python --quiet || true
-        brew link --overwrite --quiet python || true
+        brew link --overwrite --quiet python 2>/dev/null || true
         brew bundle --no-lock --quiet --file dist/Brewfile || true
         rm -rf /usr/local/Cellar/capstone
 
@@ -305,7 +308,13 @@ jobs:
         cd bundle
         ln -s /Applications Applications
         cd ..
-        hdiutil create -volname "ImHex" -srcfolder bundle -ov -format UDZO imhex-${{ env.IMHEX_VERSION }}-macOS${{ matrix.suffix }}-x86_64.dmg
+        for i in $(seq 1 10); do
+            if hdiutil create -volname "ImHex" -srcfolder bundle -ov -format UDZO imhex-${{ env.IMHEX_VERSION }}-macOS${{ matrix.suffix }}-x86_64.dmg; then
+                echo "Created dmg after ${i} attempts"
+                break
+            fi
+            sleep 10
+        done
 
     - name: ⬆️ Upload DMG
       uses: actions/upload-artifact@v4

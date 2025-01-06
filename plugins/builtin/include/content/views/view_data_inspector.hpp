@@ -24,6 +24,7 @@ namespace hex::plugin::builtin {
             ContentRegistry::DataInspector::impl::DisplayFunction displayFunction;
             std::optional<ContentRegistry::DataInspector::impl::EditingFunction> editingFunction;
             bool editing;
+            u64 requiredSize;
 
             std::string filterValue;
         };
@@ -59,15 +60,17 @@ namespace hex::plugin::builtin {
         size_t m_validBytes = 0;
         prv::Provider *m_selectedProvider = nullptr;
         std::atomic<bool> m_dataValid = false;
+
+        pl::PatternLanguage m_runtime;
         std::vector<InspectorCacheEntry> m_cachedData, m_workData;
+        std::optional<UnlocalizedString> m_selectedEntryName;
+
         TaskHolder m_updateTask;
 
         std::string m_editingValue = "";
 
         bool m_tableEditingModeEnabled = false;
         std::set<std::string> m_hiddenValues;
-
-        pl::PatternLanguage m_runtime;
     };
 
 }

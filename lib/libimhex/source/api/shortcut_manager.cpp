@@ -1,6 +1,7 @@
 #include <hex/api/shortcut_manager.hpp>
 #include <imgui.h>
 #include <hex/api/content_registry.hpp>
+#include <hex/api/task_manager.hpp>
 #include <hex/helpers/auto_reset.hpp>
 
 #include <hex/ui/view.hpp>
@@ -12,6 +13,8 @@ namespace hex {
         AutoReset<std::map<Shortcut, ShortcutManager::ShortcutEntry>> s_globalShortcuts;
         std::atomic<bool> s_paused;
         std::optional<Shortcut> s_prevShortcut;
+        bool s_macOSMode = false;
+        AutoReset<std::optional<UnlocalizedString>> s_lastShortcutMainMenu;
 
     }
 
@@ -78,22 +81,14 @@ namespace hex {
     std::string Shortcut::toString() const {
         std::string result;
 
-        #if defined(OS_MACOS)
-            constexpr static auto CTRL_NAME     = "⌃";
-            constexpr static auto ALT_NAME      = "⌥";
-            constexpr static auto SHIFT_NAME    = "⇧";
-            constexpr static auto SUPER_NAME    = "⌘";
-            constexpr static auto Concatination = " ";
-        #else
-            constexpr static auto CTRL_NAME     = "CTRL";
-            constexpr static auto ALT_NAME      = "ALT";
-            constexpr static auto SHIFT_NAME    = "SHIFT";
-            constexpr static auto SUPER_NAME    = "SUPER";
-            constexpr static auto Concatination = " + ";
-        #endif
+        const auto CTRL_NAME     = s_macOSMode ? "⌃" : "CTRL";
+        const auto ALT_NAME      = s_macOSMode ? "⌥" : "ALT";
+        const auto SHIFT_NAME    = s_macOSMode ? "⇧" : "SHIFT";
+        const auto SUPER_NAME    = s_macOSMode ? "⌘" : "SUPER";
+        const auto Concatination = s_macOSMode ? " " : " + ";
 
         auto keys = m_keys;
-        if (keys.erase(CTRL) > 0) {
+        if (keys.erase(CTRL) > 0 || (!s_macOSMode && keys.erase(CTRLCMD) > 0)) {
             result += CTRL_NAME;
             result += Concatination;
         }
@@ -105,7 +100,7 @@ namespace hex {
             result += SHIFT_NAME;
             result += Concatination;
         }
-        if (keys.erase(SUPER) > 0) {
+        if (keys.erase(SUPER) > 0 || (s_macOSMode && keys.erase(CTRLCMD) > 0)) {
             result += SUPER_NAME;
             result += Concatination;
         }
@@ -238,28 +233,66 @@ namespace hex {
         return result;
     }
 
+    KeyEquivalent Shortcut::toKeyEquivalent() const {
+        #if defined(OS_MACOS)
+            if (*this == None)
+                return { };
 
-    void ShortcutManager::addGlobalShortcut(const Shortcut &shortcut, const std::vector<UnlocalizedString> &unlocalizedName, const std::function<void()> &callback) {
+            KeyEquivalent result = {};
+            result.valid = true;
+
+            for (const auto &key : m_keys) {
+                switch (key.getKeyCode()) {
+                    case CTRL.getKeyCode():
+                        result.ctrl = true;
+                        break;
+                    case SHIFT.getKeyCode():
+                        result.shift = true;
+                        break;
+                    case ALT.getKeyCode():
+                        result.opt = true;
+                        break;
+                    case SUPER.getKeyCode():
+                    case CTRLCMD.getKeyCode():
+                        result.cmd = true;
+                        break;
+                    case CurrentView.getKeyCode(): break;
+                    case AllowWhileTyping.getKeyCode(): break;
+                    default:
+                        macosGetKey(Keys(key.getKeyCode()), &result.key);
+                        break;
+                }
+            }
+
+            return result;
+        #else
+            return { };
+        #endif
+    }
+
+
+
+    void ShortcutManager::addGlobalShortcut(const Shortcut &shortcut, const std::vector<UnlocalizedString> &unlocalizedName, const std::function<void()> &callback, const EnabledCallback &enabledCallback) {
         log::debug("Adding global shortcut {} for {}", shortcut.toString(), unlocalizedName.back().get());
-        auto [it, inserted] = s_globalShortcuts->insert({ shortcut, { shortcut, unlocalizedName, callback } });
+        auto [it, inserted] = s_globalShortcuts->insert({ shortcut, { shortcut, unlocalizedName, callback, enabledCallback } });
         if (!inserted) log::error("Failed to add shortcut!");
     }
 
-    void ShortcutManager::addGlobalShortcut(const Shortcut &shortcut, const UnlocalizedString &unlocalizedName, const std::function<void()> &callback) {
+    void ShortcutManager::addGlobalShortcut(const Shortcut &shortcut, const UnlocalizedString &unlocalizedName, const std::function<void()> &callback, const EnabledCallback &enabledCallback) {
         log::debug("Adding global shortcut {} for {}", shortcut.toString(), unlocalizedName.get());
-        auto [it, inserted] = s_globalShortcuts->insert({ shortcut, { shortcut, { unlocalizedName }, callback } });
+        auto [it, inserted] = s_globalShortcuts->insert({ shortcut, { shortcut, { unlocalizedName }, callback, enabledCallback } });
         if (!inserted) log::error("Failed to add shortcut!");
     }
 
-    void ShortcutManager::addShortcut(View *view, const Shortcut &shortcut, const std::vector<UnlocalizedString> &unlocalizedName, const std::function<void()> &callback) {
+    void ShortcutManager::addShortcut(View *view, const Shortcut &shortcut, const std::vector<UnlocalizedString> &unlocalizedName, const std::function<void()> &callback, const EnabledCallback &enabledCallback) {
         log::debug("Adding shortcut {} for {}", shortcut.toString(), unlocalizedName.back().get());
-        auto [it, inserted] = view->m_shortcuts.insert({ shortcut + CurrentView, { shortcut, unlocalizedName, callback } });
+        auto [it, inserted] = view->m_shortcuts.insert({ shortcut + CurrentView, { shortcut, unlocalizedName, callback, enabledCallback } });
         if (!inserted) log::error("Failed to add shortcut!");
     }
 
-    void ShortcutManager::addShortcut(View *view, const Shortcut &shortcut, const UnlocalizedString &unlocalizedName, const std::function<void()> &callback) {
+    void ShortcutManager::addShortcut(View *view, const Shortcut &shortcut, const UnlocalizedString &unlocalizedName, const std::function<void()> &callback, const EnabledCallback &enabledCallback) {
         log::debug("Adding shortcut {} for {}", shortcut.toString(), unlocalizedName.get());
-        auto [it, inserted] = view->m_shortcuts.insert({ shortcut + CurrentView, { shortcut, { unlocalizedName }, callback } });
+        auto [it, inserted] = view->m_shortcuts.insert({ shortcut + CurrentView, { shortcut, { unlocalizedName }, callback, enabledCallback } });
         if (!inserted) log::error("Failed to add shortcut!");
     }
 
@@ -267,13 +300,13 @@ namespace hex {
         Shortcut pressedShortcut;
 
         if (ctrl)
-            pressedShortcut += CTRL;
+            pressedShortcut += s_macOSMode ? CTRL : CTRLCMD;
         if (alt)
             pressedShortcut += ALT;
         if (shift)
             pressedShortcut += SHIFT;
         if (super)
-            pressedShortcut += SUPER;
+            pressedShortcut += s_macOSMode ? CTRLCMD : SUPER;
         if (focused)
             pressedShortcut += CurrentView;
         if (ImGui::GetIO().WantTextInput)
@@ -292,7 +325,14 @@ namespace hex {
 
         if (auto it = shortcuts.find(shortcut); it != shortcuts.end()) {
             const auto &[foundShortcut, entry] = *it;
-            entry.callback();
+
+            if (entry.enabledCallback()) {
+                entry.callback();
+
+                if (!entry.unlocalizedName.empty()) {
+                    s_lastShortcutMainMenu = entry.unlocalizedName.front();
+                }
+            }
         }
     }
 
@@ -311,6 +351,15 @@ namespace hex {
 
         processShortcut(pressedShortcut, s_globalShortcuts);
     }
+
+    std::optional<UnlocalizedString> ShortcutManager::getLastActivatedMenu() {
+        return *s_lastShortcutMainMenu;
+    }
+
+    void ShortcutManager::resetLastActivatedMenu() {
+        s_lastShortcutMainMenu->reset();
+    }
+
 
     void ShortcutManager::clearShortcuts() {
         s_globalShortcuts->clear();
@@ -386,5 +435,10 @@ namespace hex {
 
         return result;
     }
+
+    void ShortcutManager::enableMacOSMode() {
+        s_macOSMode = true;
+    }
+
 
 }
